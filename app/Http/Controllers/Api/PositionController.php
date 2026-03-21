@@ -83,7 +83,70 @@ class PositionController extends Controller
         $position->delete();
         return response()->json(['message' => 'Position deleted.']);
     }
+/**
+ * POST /api/positions/sell-recommendations
+ * AI analysis focused on what to sell
+ */
+public function sellRecommendations()
+{
+    $positions = auth()->user()->positions()->orderBy('value', 'desc')->get();
 
+    if ($positions->isEmpty()) {
+        return response()->json(['error' => 'No positions found.'], 422);
+    }
+
+    $totalValue    = round($positions->sum('value'), 2);
+    $totalGain     = round($positions->sum('total_gain_dollar'), 2);
+
+    $positionLines = $positions->map(function ($p) {
+        $status = $p->total_gain_dollar >= 0 ? 'UP' : 'DOWN';
+        return "{$p->symbol} ({$p->asset_type}): qty={$p->quantity}, paid=\${$p->price_paid}, "
+             . "now=\${$p->last_price}, value=\${$p->value}, "
+             . "total_gain=\${$p->total_gain_dollar} ({$p->total_gain_percent}%) [{$status}], "
+             . "today=\${$p->days_gain_dollar} ({$p->change_percent}%)";
+    })->implode("\n");
+
+    $prompt = <<<EOT
+You are an aggressive but smart trading analyst. A trader just logged in and wants to know what they should sell RIGHT NOW based on technical analysis and risk management.
+
+PORTFOLIO (Total Value: \${$totalValue}, Total P&L: \${$totalGain}):
+{$positionLines}
+
+Analyze this portfolio and give SELL recommendations only. Be direct and specific.
+
+Format your response exactly like this:
+
+🚨 SELL IMMEDIATELY
+List any positions that should be sold right now with a one-line reason each. Focus on: down more than 50%, no recovery potential, better opportunities elsewhere. If none, say "None — hold your current positions."
+
+⚠️ CONSIDER SELLING
+List positions to consider selling with a one-line reason each. Focus on: weakening momentum, better to take profits, high risk/low reward. If none, say "None."
+
+✅ STRONG HOLDS
+List 2-3 positions that look strongest and should NOT be sold, with a one-line reason each.
+
+💡 BOTTOM LINE
+One paragraph summary: what's the most important action this trader should take today?
+
+Be brutally honest. Use the actual dollar figures. Keep each line short and punchy.
+EOT;
+
+    $response = Http::withHeaders([
+        'x-api-key'         => env('ANTHROPIC_API_KEY'),
+        'anthropic-version' => '2023-06-01',
+        'content-type'      => 'application/json',
+    ])->post('https://api.anthropic.com/v1/messages', [
+        'model'      => 'claude-haiku-4-5-20251001',
+        'max_tokens' => 1000,
+        'messages'   => [
+            ['role' => 'user', 'content' => $prompt],
+        ],
+    ]);
+
+    return response()->json([
+        'analysis' => $response->json('content.0.text'),
+    ]);
+}
     /**
      * POST /api/positions/{position}/analyze
      * AI analysis of a single position.
