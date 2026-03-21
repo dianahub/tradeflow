@@ -11,56 +11,74 @@ use Illuminate\Support\Facades\Hash;
 
 class AuthController extends Controller
 {
-    public function register(Request $request): JsonResponse
-    {
-        $validated = $request->validate([
-            'name'     => 'required|string|max:255',
-            'email'    => 'required|email|unique:users',
-            'password' => 'required|min:8|confirmed',
-        ]);
+   public function register(Request $request): JsonResponse
+{
+    $validated = $request->validate([
+        'name'     => 'required|string|max:255',
+        'email'    => 'required|email|unique:users',
+        'password' => 'required|min:8|confirmed',
+    ]);
 
-        $user = User::create([
-            'name'     => $validated['name'],
-            'email'    => $validated['email'],
-            'password' => Hash::make($validated['password']),
-        ]);
+    $user = User::create([
+        'name'     => $validated['name'],
+        'email'    => $validated['email'],
+        'password' => Hash::make($validated['password']),
+    ]);
 
-        return response()->json([
-            'user'  => [
-                'id'    => $user->id,
-                'name'  => $user->name,
-                'email' => $user->email,
-            ],
-            'token' => $user->createToken('api-token')->plainTextToken,
-        ], 201);
-    }
+    return response()->json([
+        'user'  => [
+            'id'               => $user->id,
+            'name'             => $user->name,
+            'email'            => $user->email,
+            'login_count'      => 0,
+            'logins_remaining' => 5,
+            'is_paid'          => false,
+        ],
+        'token' => $user->createToken('api-token')->plainTextToken,
+    ], 201);
+}
 
     public function login(Request $request): JsonResponse
-    {
-        $request->validate([
-            'email'    => 'required|email',
-            'password' => 'required',
-        ]);
+{
+    $request->validate([
+        'email'    => 'required|email',
+        'password' => 'required',
+    ]);
 
-        if (!Auth::attempt($request->only('email', 'password'))) {
-            return response()->json([
-                'message' => 'Invalid credentials'
-            ], 401);
-        }
-
-        $user = Auth::user();
-        $user->tokens()->delete(); // revoke old tokens
-
-        return response()->json([
-            'user'  => [
-                'id'    => $user->id,
-                'name'  => $user->name,
-                'email' => $user->email,
-            ],
-            'token' => $user->createToken('api-token')->plainTextToken,
-        ]);
+    if (!Auth::attempt($request->only('email', 'password'))) {
+        return response()->json(['message' => 'Invalid credentials'], 401);
     }
 
+    $user = Auth::user();
+
+    // Check login limit for free users
+    if (!$user->is_paid && $user->login_count >= 5) {
+        return response()->json([
+            'message' => 'Free trial expired. You have used all 5 free logins.',
+            'trial_expired' => true,
+        ], 403);
+    }
+
+    // Increment login count
+    $user->increment('login_count');
+
+    // Revoke old tokens
+    $user->tokens()->delete();
+
+    $loginsRemaining = $user->is_paid ? null : max(0, 5 - $user->login_count);
+
+    return response()->json([
+        'user'  => [
+            'id'               => $user->id,
+            'name'             => $user->name,
+            'email'            => $user->email,
+            'login_count'      => $user->login_count,
+            'logins_remaining' => $loginsRemaining,
+            'is_paid'          => $user->is_paid,
+        ],
+        'token' => $user->createToken('api-token')->plainTextToken,
+    ]);
+}
     public function logout(Request $request): JsonResponse
     {
         $request->user()->currentAccessToken()->delete();
