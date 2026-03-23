@@ -1,11 +1,13 @@
+<?php
+
 return [
-    'paths' => ['api/*', 'sanctum/csrf-cookie', 'login', 'register', 'logout'],  // Add your auth routes if needed
+
+    'paths' => ['api/*', 'sanctum/csrf-cookie'],
 
     'allowed_methods' => ['*'],
 
     'allowed_origins' => [
-        'https://sellit-portfolio-dashboard.vercel.app',  // ← Add this exact URL!
-        'http://localhost:3000', 'http://localhost:5173', // For local dev (Vite/React/Next)
+        'https://sellit-portfolio-dashboard.vercel.app',
     ],
 
     'allowed_origins_patterns' => [],
@@ -16,5 +18,5 @@ return [
 
     'max_age' => 0,
 
-    'supports_credentials' => true,  // Critical for cookies/auth!
+    'supports_credentials' => true,
 ];
