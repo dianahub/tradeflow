@@ -51,8 +51,8 @@ class AuthController extends Controller
 
     $user = Auth::user();
 
-    // Check login limit for free users
-    if (!$user->is_paid && $user->login_count >= 5) {
+    // Check login limit for free users (skip in development)
+    if (app('env') !== 'local' && !$user->is_paid && $user->login_count >= 5) {
         return response()->json([
             'message' => 'Free trial expired. You have used all 5 free logins.',
             'trial_expired' => true,
