@@ -16,7 +16,6 @@ class PositionController extends Controller
     public function index()
     {
         $positions = auth()->user()->positions()->orderBy('value', 'desc')->get();
-        $positions = Position::orderBy('value', 'desc')->get();
 
         $summary = [
             'total_value'       => round($positions->sum('value'), 2),
