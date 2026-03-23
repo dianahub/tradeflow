@@ -22,6 +22,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // Prices
     Route::post('prices/refresh-crypto', [PriceController::class, 'refreshCrypto']);
     Route::post('prices/refresh-stocks', [PriceController::class, 'refreshStocks']);
+    Route::get('prices/quote/{symbol}', [PriceController::class, 'quote']);
 
     // Trades
     Route::apiResource('trades', TradeController::class);
