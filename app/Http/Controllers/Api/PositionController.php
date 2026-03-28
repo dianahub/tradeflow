@@ -90,6 +90,13 @@ public function sellRecommendations()
 {
     $positions = auth()->user()->positions()->orderBy('value', 'desc')->get();
 
+    $apiKey = env('ANTHROPIC_API_KEY');
+    if (!$apiKey) {
+        return response()->json([
+            'message' => 'Anthropic API key missing (ANTHROPIC_API_KEY).',
+        ], 422);
+    }
+
     if ($positions->isEmpty()) {
         return response()->json(['error' => 'No positions found.'], 422);
     }
@@ -105,8 +112,16 @@ public function sellRecommendations()
              . "today=\${$p->days_gain_dollar} ({$p->change_percent}%)";
     })->implode("\n");
 
-    $prompt = <<<EOT
+        $prompt = <<<EOT
 You are an aggressive but smart trading analyst. A trader just logged in and wants to know what they should sell RIGHT NOW based on technical analysis and risk management.
+
+CRITICAL RULES (must follow):
+1) Use ONLY the provided portfolio numbers as the numeric source of truth (price/value/P&L).
+2) You do NOT have real-time charts/indicators unless they are provided. Do NOT invent RSI/MACD values.
+3) When you recommend SELL/CONSIDER SELLING, you MUST include technical reasoning as either:
+   - conditional checks ("If price broke support at X / if MACD crossed down / if RSI diverged...")
+   - or qualitative trend logic tied to the provided numbers (downtrend vs cost basis, large drawdown, failed bounce).
+4) If you reference support/resistance, explain what level to use (prior swing low/high) and phrase it as a level to check, not a guaranteed fact.
 
 PORTFOLIO (Total Value: \${$totalValue}, Total P&L: \${$totalGain}):
 {$positionLines}
@@ -130,20 +145,38 @@ One paragraph summary: what's the most important action this trader should take 
 Be brutally honest. Use the actual dollar figures. Keep each line short and punchy.
 EOT;
 
+    $model = env('ANTHROPIC_MODEL', 'claude-haiku-4-5-20251001');
+
     $response = Http::withHeaders([
-        'x-api-key'         => env('ANTHROPIC_API_KEY'),
+        'x-api-key'         => $apiKey,
         'anthropic-version' => '2023-06-01',
         'content-type'      => 'application/json',
     ])->post('https://api.anthropic.com/v1/messages', [
-        'model'      => 'claude-haiku-4-5-20251001',
+        'model'      => $model,
         'max_tokens' => 1000,
         'messages'   => [
             ['role' => 'user', 'content' => $prompt],
         ],
     ]);
 
+    if (!$response->successful()) {
+        return response()->json([
+            'message' => 'Anthropic API request failed.',
+            'status'  => $response->status(),
+            'raw'     => $response->json(),
+        ], 502);
+    }
+
+    $analysisText = $response->json('content.0.text');
+    if (!$analysisText) {
+        return response()->json([
+            'message' => 'Anthropic API response missing expected content.',
+            'raw'     => $response->json(),
+        ], 502);
+    }
+
     return response()->json([
-        'analysis' => $response->json('content.0.text'),
+        'analysis' => $analysisText,
     ]);
 }
     /**
@@ -152,8 +185,22 @@ EOT;
      */
     public function analyzeOne(Position $position)
     {
+        $apiKey = env('ANTHROPIC_API_KEY');
+        if (!$apiKey) {
+            return response()->json([
+                'message' => 'Anthropic API key missing (ANTHROPIC_API_KEY).',
+            ], 422);
+        }
+
         $prompt = <<<EOT
 You are a professional trading analyst and options strategist. Analyze this single position and give specific, actionable advice.
+
+CRITICAL RULES (must follow):
+1) Use the provided POSITION numbers as the source of truth (especially Current Price and Current Value).
+2) Do NOT replace the position with a different instrument or price source (example: do not use commodity spot prices like "silver per oz" unless the position explicitly says it is a spot commodity instrument).
+3) Any price targets you give MUST be realistic relative to the provided Current Price and should be written in the same units.
+4) If you lack real-time market data, say so and keep macro/world context qualitative only.
+5) When you recommend SELL / TRIM / STOP / EXIT, include at least 2 technical reasons or technical checks. Because you do not have live charts here, phrase them as checks (examples: "if price broke key support", "if MACD bearish cross", "if RSI stays below 50", "if price is below declining 50/200 DMA", "if volume confirms breakdown"). Do NOT invent indicator values.
 
 POSITION:
 Symbol: {$position->symbol}
@@ -168,7 +215,7 @@ Option Type: {$position->option_type}
 Strike Price: {$position->strike_price}
 Expiration: {$position->expiration_date}
 
-Provide analysis in these exact sections:
+Provide analysis in these exact sections . Take into account the macro things happening in the world such as wars, economic brake downs, potential for bank failures , world affairs in general .
 
 **📊 Position Assessment**
 2-3 sentences on the current state of this position, performance vs cost basis.
@@ -198,21 +245,39 @@ One clear sentence: what should the trader do right now?
 Keep it direct, specific, and use the actual dollar figures from the data.
 EOT;
 
+        $model = env('ANTHROPIC_MODEL', 'claude-haiku-4-5-20251001');
+
         $response = Http::withHeaders([
-            'x-api-key'         => env('ANTHROPIC_API_KEY'),
+            'x-api-key'         => $apiKey,
             'anthropic-version' => '2023-06-01',
             'content-type'      => 'application/json',
         ])->post('https://api.anthropic.com/v1/messages', [
-            'model'      => 'claude-haiku-4-5-20251001',
+            'model'      => $model,
             'max_tokens' => 1000,
             'messages'   => [
                 ['role' => 'user', 'content' => $prompt],
             ],
         ]);
 
+        if (!$response->successful()) {
+            return response()->json([
+                'message' => 'Anthropic API request failed.',
+                'status'  => $response->status(),
+                'raw'     => $response->json(),
+            ], 502);
+        }
+
+        $analysisText = $response->json('content.0.text');
+        if (!$analysisText) {
+            return response()->json([
+                'message' => 'Anthropic API response missing expected content.',
+                'raw'     => $response->json(),
+            ], 502);
+        }
+
         return response()->json([
             'position' => $position,
-            'analysis' => $response->json('content.0.text'),
+            'analysis' => $analysisText,
         ]);
     }
 
@@ -223,7 +288,13 @@ EOT;
     public function analyze()
     {
         $positions = auth()->user()->positions()->orderBy('value', 'desc')->get();
-        $positions = Position::orderBy('value', 'desc')->get();
+
+        $apiKey = env('ANTHROPIC_API_KEY');
+        if (!$apiKey) {
+            return response()->json([
+                'message' => 'Anthropic API key missing (ANTHROPIC_API_KEY).',
+            ], 422);
+        }
 
         if ($positions->isEmpty()) {
             return response()->json(['error' => 'No positions found. Import your portfolio first.'], 422);
@@ -246,6 +317,12 @@ EOT;
         $prompt = <<<EOT
 You are a professional portfolio analyst and trading coach. Analyze this stock/ETF portfolio objectively.
 
+CRITICAL RULES (must follow):
+1) Use ONLY the provided POSITIONS data as your numeric source of truth.
+2) Do NOT invent current prices or substitute with outside spot prices.
+3) If you provide targets/scenarios, keep them realistic relative to the provided "now" prices.
+4) If you lack real-time market data, say so.
+
 PORTFOLIO SNAPSHOT
 Total Value: \${$totalValue}
 Today's Gain: \${$totalDaysGain}
@@ -264,17 +341,35 @@ Provide a structured analysis with these 4 sections:
 Keep the tone direct and professional. Use dollar figures from the data.
 EOT;
 
+        $model = env('ANTHROPIC_MODEL', 'claude-haiku-4-5-20251001');
+
         $response = Http::withHeaders([
-            'x-api-key'         => env('ANTHROPIC_API_KEY'),
+            'x-api-key'         => $apiKey,
             'anthropic-version' => '2023-06-01',
             'content-type'      => 'application/json',
         ])->post('https://api.anthropic.com/v1/messages', [
-            'model'      => 'claude-haiku-4-5-20251001',
+            'model'      => $model,
             'max_tokens' => 800,
             'messages'   => [
                 ['role' => 'user', 'content' => $prompt],
             ],
         ]);
+
+        if (!$response->successful()) {
+            return response()->json([
+                'message' => 'Anthropic API request failed.',
+                'status'  => $response->status(),
+                'raw'     => $response->json(),
+            ], 502);
+        }
+
+        $analysisText = $response->json('content.0.text');
+        if (!$analysisText) {
+            return response()->json([
+                'message' => 'Anthropic API response missing expected content.',
+                'raw'     => $response->json(),
+            ], 502);
+        }
 
         return response()->json([
             'summary' => [
@@ -284,7 +379,7 @@ EOT;
                 'winners'        => $winners->count(),
                 'losers'         => $losers->count(),
             ],
-            'analysis' => $response->json('content.0.text'),
+            'analysis' => $analysisText,
         ]);
     }
 
