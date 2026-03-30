@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\TradeController;
 use App\Http\Controllers\Api\AnalyticsController;
+use App\Http\Controllers\Api\FreeAnalysisController;
 use App\Http\Controllers\Api\PositionController;
 use App\Http\Controllers\Api\PriceController;
 use Illuminate\Support\Facades\Route;
@@ -11,8 +12,9 @@ use App\Http\Controllers\Api\PortfolioImportController;
 // inside auth middleware group:
 Route::post('portfolio/import-screenshot', [PortfolioImportController::class, 'importFromScreenshot']);
 // Public routes
-Route::post('/register', [AuthController::class, 'register']);
-Route::post('/login',    [AuthController::class, 'login']);
+Route::post('/register',      [AuthController::class, 'register']);
+Route::post('/login',         [AuthController::class, 'login']);
+Route::post('/analyze-free',  [FreeAnalysisController::class, 'analyze']);
 
 // Protected routes
 Route::middleware('auth:sanctum')->group(function () {

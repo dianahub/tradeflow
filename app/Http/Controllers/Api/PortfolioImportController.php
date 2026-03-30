@@ -2,13 +2,16 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Exceptions\AnthropicApiException;
 use App\Http\Controllers\Controller;
 use App\Models\Position;
+use App\Services\AI\AnthropicService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Http;
 
 class PortfolioImportController extends Controller
 {
+    public function __construct(private readonly AnthropicService $anthropic) {}
+
     public function importFromScreenshot(Request $request)
     {
         $request->validate([
@@ -46,39 +49,11 @@ Return ONLY a valid JSON array, no explanation, no markdown, no code blocks.
 If you cannot read the image or find no positions, return an empty array: []
 EOT;
 
-        $response = Http::withHeaders([
-            'x-api-key'         => env('ANTHROPIC_API_KEY'),
-            'anthropic-version' => '2023-06-01',
-            'content-type'      => 'application/json',
-        ])->post('https://api.anthropic.com/v1/messages', [
-            'model'      => 'claude-opus-4-6',
-            'max_tokens' => 4096,
-            'messages'   => [
-                [
-                    'role'    => 'user',
-                    'content' => [
-                        [
-                            'type'   => 'image',
-                            'source' => [
-                                'type'       => 'base64',
-                                'media_type' => $mimeType,
-                                'data'       => $imageData,
-                            ],
-                        ],
-                        [
-                            'type' => 'text',
-                            'text' => $prompt,
-                        ],
-                    ],
-                ],
-            ],
-        ]);
-
-        if (!$response->ok()) {
-            return response()->json(['error' => 'Claude API error'], 500);
+        try {
+            $text = $this->anthropic->completeWithVision($prompt, $imageData, $mimeType);
+        } catch (AnthropicApiException $e) {
+            return response()->json(['error' => 'Claude API error: ' . $e->getMessage()], 503);
         }
-
-        $text = $response->json('content.0.text');
 
         // Parse the JSON response from Claude
         try {
