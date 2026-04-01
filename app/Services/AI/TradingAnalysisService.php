@@ -6,6 +6,7 @@ use App\Exceptions\AnthropicApiException;
 use App\Models\AiAnalysis;
 use App\Models\Position;
 use App\Models\User;
+use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
 class TradingAnalysisService
@@ -154,20 +155,29 @@ class TradingAnalysisService
 
     private function buildPortfolioPrompt(Collection $positions, string $ragContext): string
     {
+        $today        = now()->startOfDay();
         $totalValue   = $positions->sum('value');
         $totalGain    = $positions->sum('total_gain_dollar');
         $totalGainPct = $totalValue > 0 ? ($totalGain / ($totalValue - $totalGain)) * 100 : 0;
         $dayGain      = $positions->sum('days_gain_dollar');
 
-        $positionList = $positions->map(fn(Position $p) =>
-            "- {$p->symbol} ({$p->asset_type}): \${$p->value} value, "
-            . "\${$p->total_gain_dollar} total gain ({$p->total_gain_percent}%), "
-            . "\${$p->days_gain_dollar} today"
-            . ($p->asset_type === 'option' ? ", {$p->option_type} \${$p->strike_price} exp {$p->expiration_date}" : '')
-        )->implode("\n");
+        $positionList = $positions->map(function (Position $p) use ($today) {
+            $line = "- {$p->symbol} ({$p->asset_type}): \${$p->value} value, "
+                . "\${$p->total_gain_dollar} total gain ({$p->total_gain_percent}%), "
+                . "\${$p->days_gain_dollar} today";
+            if ($p->asset_type === 'option' && $p->expiration_date) {
+                $dte  = (int) $today->diffInDays(\Carbon\Carbon::parse($p->expiration_date), false);
+                $line .= ", {$p->option_type} strike \${$p->strike_price} exp {$p->expiration_date} ({$dte} days to expiry)";
+            }
+            return $line;
+        })->implode("\n");
+
+        $todayStr = $today->toDateString();
 
         return <<<EOT
 {$ragContext}You are a professional portfolio analyst. Analyze this portfolio and give a clear, direct assessment.
+
+Today's date: {$todayStr}
 
 PORTFOLIO SUMMARY:
 Total Value: \${$totalValue}
@@ -184,21 +194,35 @@ Provide a concise analysis covering:
 3. BRIGHT SPOTS — what is working well
 4. ACTION ITEMS — 2-3 specific, actionable steps ranked by priority
 
-Use only the data provided above. Do not invent price targets, RSI, or MACD values.
+Use the provided data for all P&L numbers. You may reference technical signals (moving averages, MACD, RSI) from your training knowledge when relevant — label them as estimates.
 EOT;
     }
 
     private function buildPositionPrompt(Position $position, string $ragContext): string
     {
+        $today = now()->startOfDay();
         $optionInfo = '';
         if ($position->asset_type === 'option') {
-            $optionInfo = "\nOption Type: {$position->option_type} | Strike: \${$position->strike_price} | Expiry: {$position->expiration_date} | Underlying: {$position->underlying_symbol}";
+            $dte = $position->expiration_date
+                ? (int) $today->diffInDays(\Carbon\Carbon::parse($position->expiration_date), false)
+                : null;
+            $optionInfo = "\nOption Type: {$position->option_type} | Strike: \${$position->strike_price} | Expiry: {$position->expiration_date}"
+                . ($dte !== null ? " ({$dte} days to expiry)" : '')
+                . " | Underlying: {$position->underlying_symbol}";
             if ($position->delta) $optionInfo .= " | Delta: {$position->delta}";
             if ($position->implied_volatility) $optionInfo .= " | IV: {$position->implied_volatility}%";
         }
 
+        $todayStr = $today->toDateString();
+
+        $coveredCallSection = ($position->asset_type === 'stock' && $position->quantity >= 100)
+            ? "\n5. COVERED CALL RECOMMENDATION — suggest a covered call strike and expiry if appropriate"
+            : '';
+
         return <<<EOT
 {$ragContext}You are a professional trading analyst. Analyze this position and give a clear, direct assessment.
+
+Today's date: {$todayStr}
 
 POSITION:
 Symbol: {$position->symbol} ({$position->asset_type})
@@ -210,26 +234,35 @@ Total Gain/Loss: \${$position->total_gain_dollar} ({$position->total_gain_percen
 Today's Change: \${$position->days_gain_dollar}{$optionInfo}
 
 Provide analysis covering:
-1. POSITION ASSESSMENT — current status, risk/reward at this level
-2. SHORT-TERM OUTLOOK — next 1-4 weeks based on position mechanics
-3. LONG-TERM OUTLOOK — 3-12 month view
-4. PRICE TARGETS — upside target and downside risk level (based on technicals or fundamentals you know, clearly labelled as estimates)
-5. COVERED CALL RECOMMENDATION — if this is a stock, suggest a covered call strike and expiry if appropriate
-6. ACTION ITEM — one clear, specific recommendation
+1. ACTION ITEM — one clear, specific recommendation (lead with this)
+2. POSITION ASSESSMENT — current status, risk/reward at this level
+3. SHORT-TERM OUTLOOK — next 1-4 weeks based on position mechanics
+4. LONG-TERM OUTLOOK — 3-12 month view
+5. PRICE TARGETS — upside target and downside risk level (based on technicals or fundamentals you know, clearly labelled as estimates){$coveredCallSection}
 
-Consider macro context (interest rates, sector trends, market conditions). Use only the provided position data for the numbers.
+Consider macro context (interest rates, sector trends, market conditions). Use only the provided position data for P&L numbers.
+You may reference technical signals (moving averages, MACD, RSI, support/resistance) from your training knowledge if they are directly relevant to the ACTION ITEM — label them as estimates and only include them when they strengthen or change the recommendation. Do not mention covered calls.
 EOT;
     }
 
     private function buildSellRecommendationsPrompt(Collection $positions, string $ragContext): string
     {
-        $positionList = $positions->map(fn(Position $p) =>
-            "- {$p->symbol}: \${$p->value} | {$p->total_gain_percent}% total | \${$p->days_gain_dollar} today"
-            . ($p->asset_type === 'option' ? " | {$p->option_type} exp {$p->expiration_date}" : '')
-        )->implode("\n");
+        $today = now()->startOfDay();
+        $todayStr = $today->toDateString();
+
+        $positionList = $positions->map(function (Position $p) use ($today) {
+            $line = "- {$p->symbol}: \${$p->value} | {$p->total_gain_percent}% total | \${$p->days_gain_dollar} today";
+            if ($p->asset_type === 'option' && $p->expiration_date) {
+                $dte  = (int) $today->diffInDays(\Carbon\Carbon::parse($p->expiration_date), false);
+                $line .= " | {$p->option_type} strike \${$p->strike_price} exp {$p->expiration_date} ({$dte} DTE)";
+            }
+            return $line;
+        })->implode("\n");
 
         return <<<EOT
 {$ragContext}You are a professional portfolio manager. Review this portfolio and give clear sell/hold guidance.
+
+Today's date: {$todayStr}
 
 POSITIONS:
 {$positionList}
@@ -241,7 +274,7 @@ CONSIDER SELLING — positions worth reviewing for exit (explain the trigger con
 STRONG HOLDS — positions to keep without question (brief reason)
 BOTTOM LINE — one paragraph summary of the overall portfolio action
 
-Rules: Do NOT invent RSI/MACD values. Use only the data provided. Be specific about which positions and why.
+Rules: Use the provided position data for all P&L numbers. You may reference technical signals (moving averages, MACD, RSI, key support/resistance) from your training knowledge when they directly support a sell or hold call — label them as estimates. Be specific about which positions and why.
 EOT;
     }
 

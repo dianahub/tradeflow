@@ -83,12 +83,21 @@ EOT;
                 }
             }
 
+            $assetType = $p['asset_type'] ?? 'stock';
+            $uniqueKey = [
+                'user_id'    => $userId,
+                'symbol'     => strtoupper($p['symbol']),
+                'asset_type' => $assetType,
+            ];
+
+            if ($assetType === 'option') {
+                $uniqueKey['option_type']     = $p['option_type']     ?? null;
+                $uniqueKey['strike_price']    = $p['strike_price']    ?? null;
+                $uniqueKey['expiration_date'] = $p['expiration_date'] ?? null;
+            }
+
             $position = Position::updateOrCreate(
-                [
-                    'user_id'    => $userId,
-                    'symbol'     => strtoupper($p['symbol']),
-                    'asset_type' => $p['asset_type'] ?? 'stock',
-                ],
+                $uniqueKey,
                 [
                     'last_price'        => $p['last_price']         ?? 0,
                     'change_dollar'     => $p['change_dollar']      ?? 0,

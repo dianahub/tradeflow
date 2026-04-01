@@ -14,6 +14,10 @@ Route::post('portfolio/import-screenshot', [PortfolioImportController::class, 'i
 // Public routes
 Route::post('/register',      [AuthController::class, 'register']);
 Route::post('/login',         [AuthController::class, 'login']);
+Route::post('/email/resend',  [AuthController::class, 'resendVerification']);
+Route::get('/email/verify/{id}/{hash}', [AuthController::class, 'verifyEmail'])
+    ->middleware('signed')
+    ->name('verification.verify');
 Route::post('/analyze-free',  [FreeAnalysisController::class, 'analyze']);
 
 // Protected routes

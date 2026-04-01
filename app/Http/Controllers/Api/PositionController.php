@@ -48,7 +48,10 @@ class PositionController extends Controller
         if (array_is_list($data)) {
             $created = [];
             foreach ($data as $item) {
-                $created[] = $this->upsertPosition($item);
+                $result = $this->upsertPosition($item);
+                if ($result !== null) {
+                    $created[] = $result;
+                }
             }
             return response()->json([
                 'message'   => count($created) . ' positions imported.',
@@ -58,6 +61,9 @@ class PositionController extends Controller
 
         // Single position
         $position = $this->upsertPosition($data);
+        if ($position === null) {
+            return response()->json(['message' => 'Symbol skipped (not a valid ticker).'], 422);
+        }
         return response()->json($position, 201);
     }
 
@@ -149,20 +155,44 @@ public function sellRecommendations(): JsonResponse
 
     // ─── helpers ────────────────────────────────────────────────────────────
 
-    private function upsertPosition(array $data): Position
+    // Brokerage account activity labels that are not real ticker symbols
+    private const SKIP_SYMBOLS = [
+        'TRANSFER', 'CASH', 'DIVIDEND', 'INTEREST', 'FEE', 'MARGIN',
+        'WIRE', 'ACH', 'JOURNAL', 'ADJUSTMENT', 'PENDING', 'SWEEP',
+        'MONEY MARKET', 'CORE', 'REINVESTMENT',
+    ];
+
+    private function upsertPosition(array $data): ?Position
     {
+        $symbol = strtoupper(trim($data['symbol'] ?? ''));
+
+        // Skip non-ticker entries from brokerage statements
+        $assetType = $data['asset_type'] ?? 'stock';
+        if (in_array($symbol, self::SKIP_SYMBOLS, true) || (str_contains($symbol, ' ') && $assetType !== 'option')) {
+            return null;
+        }
+
         foreach (['change_percent', 'total_gain_percent'] as $field) {
             if (isset($data[$field]) && is_string($data[$field])) {
                 $data[$field] = str_replace('%', '', $data[$field]);
             }
         }
 
+        $uniqueKey = [
+            'user_id'    => auth()->id(),
+            'symbol'     => strtoupper($data['symbol']),
+            'asset_type' => $data['asset_type'] ?? 'stock',
+        ];
+
+        // Options need strike+expiration+type to distinguish contracts on the same underlying
+        if (($data['asset_type'] ?? 'stock') === 'option') {
+            $uniqueKey['option_type']      = $data['option_type']      ?? null;
+            $uniqueKey['strike_price']     = $data['strike_price']     ?? null;
+            $uniqueKey['expiration_date']  = $data['expiration_date']  ?? null;
+        }
+
         return Position::updateOrCreate(
-            [
-                'user_id'    => auth()->id(),
-                'symbol'     => strtoupper($data['symbol']),
-                'asset_type' => $data['asset_type'] ?? 'stock',
-            ],
+            $uniqueKey,
             [
                 'last_price'        => $data['last_price']         ?? 0,
                 'change_dollar'     => $data['change_dollar']      ?? 0,
