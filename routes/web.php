@@ -7,6 +7,7 @@ Route::get('/', function () {
     return view('welcome');
 });
 
-Route::middleware('auth:sanctum')->group(function () {
+// DEMO MODE: swap 'demo.auth' back to 'auth:sanctum' to restore real authentication
+Route::middleware('demo.auth')->group(function () {
     Route::get('/positions', [PositionController::class, 'index']);
 });

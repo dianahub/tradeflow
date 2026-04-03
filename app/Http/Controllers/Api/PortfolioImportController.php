@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Position;
 use App\Services\AI\AnthropicService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 
 class PortfolioImportController extends Controller
 {
@@ -27,25 +28,30 @@ class PortfolioImportController extends Controller
         $prompt = <<<EOT
 This is a screenshot of a brokerage portfolio or positions page.
 
-Extract ALL positions you can see and return them as a JSON array. 
-For each position include these fields (use null if not visible):
-- symbol (stock ticker, e.g. "AAPL")
-- asset_type ("stock", "etf", "option", or "crypto")
-- quantity (number of shares/units)
-- price_paid (average cost or cost basis per share)
-- last_price (current price per share)
-- value (current total value)
-- change_dollar (today's dollar change)
-- change_percent (today's percent change, number only no % sign)
-- days_gain_dollar (today's total gain in dollars)
-- total_gain_dollar (total gain/loss in dollars)
-- total_gain_percent (total gain/loss percent, number only no % sign)
-- option_type ("call" or "put" if option, otherwise null)
-- strike_price (if option, otherwise null)
-- expiration_date (if option, format YYYY-MM-DD, otherwise null)
-- underlying_symbol (if option, otherwise null)
+Extract ALL positions you can see — including stocks, ETFs, crypto, AND options contracts. Do not skip any row.
 
-Return ONLY a valid JSON array, no explanation, no markdown, no code blocks.
+For OPTIONS: look for rows with expiration dates, strike prices, or labels like "Call", "Put", "C", "P", or OCC-format symbols (e.g. "AAPL 01/17/25 $200 Call"). Set asset_type to "option".
+For STOCKS/ETFs: set asset_type to "stock" or "etf".
+For CRYPTO: set asset_type to "crypto".
+
+Return a JSON array where each position has these fields (use null if not visible):
+- symbol: the underlying ticker (e.g. "AAPL", not the full OCC string)
+- asset_type: "stock", "etf", "option", or "crypto"
+- quantity: number of shares, contracts, or units
+- price_paid: average cost / cost basis per share or contract
+- last_price: current price per share or contract
+- value: current total market value
+- change_dollar: today's dollar change
+- change_percent: today's % change as a number (no % sign)
+- days_gain_dollar: today's total gain/loss in dollars
+- total_gain_dollar: total unrealized gain/loss in dollars
+- total_gain_percent: total unrealized gain/loss % as a number (no % sign)
+- option_type: "call" or "put" (options only, otherwise null)
+- strike_price: strike price as a number (options only, otherwise null)
+- expiration_date: expiration in YYYY-MM-DD format (options only, otherwise null)
+- underlying_symbol: underlying ticker (options only, otherwise null)
+
+Return ONLY a valid JSON array. No explanation, no markdown, no code blocks.
 If you cannot read the image or find no positions, return an empty array: []
 EOT;
 
@@ -55,22 +61,25 @@ EOT;
             return response()->json(['error' => 'Claude API error: ' . $e->getMessage()], 503);
         }
 
+        // Strip markdown code fences Claude sometimes wraps around JSON
+        $text = preg_replace('/^```(?:json)?\s*/i', '', trim($text));
+        $text = preg_replace('/\s*```$/', '', $text);
+        Log::info('Screenshot import raw response', ['text' => $text]);
+
         // Parse the JSON response from Claude
-        try {
-            $positions = json_decode($text, true);
-            if (!is_array($positions)) {
-                return response()->json(['error' => 'Could not parse positions from image', 'raw' => $text], 422);
-            }
-        } catch (\Exception $e) {
-            return response()->json(['error' => 'Invalid JSON from Claude', 'raw' => $text], 422);
+        $positions = json_decode(trim($text), true);
+        if (!is_array($positions)) {
+            return response()->json(['error' => 'Could not parse positions from image', 'raw' => $text], 422);
         }
 
         if (empty($positions)) {
             return response()->json(['error' => 'No positions found in image'], 422);
         }
 
-        // Import the positions
+        // Clear existing positions before importing
         $userId = auth()->id();
+        Position::where('user_id', $userId)->delete();
+
         $imported = [];
 
         foreach ($positions as $p) {

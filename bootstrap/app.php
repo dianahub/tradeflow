@@ -12,6 +12,8 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware): void {
         $middleware->trustProxies(at: '*');
+        // DEMO MODE: remove this alias (and revert routes/api.php) to restore real auth
+        $middleware->alias(['demo.auth' => \App\Http\Middleware\DemoAuth::class]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //
