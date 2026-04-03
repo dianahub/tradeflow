@@ -1,5 +1,0 @@
-[build]
-buildCommand = "composer install --optimize-autoloader --no-scripts --no-interaction && npm install && npm run build && mkdir -p storage/framework/{sessions,views,cache,testing} storage/logs bootstrap/cache && chmod -R a+rw storage"
-
-[deploy]
-startCommand = "php artisan config:cache && php artisan route:cache && php artisan event:cache && php artisan view:cache && php artisan migrate --force && /start-container.sh"
