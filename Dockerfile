@@ -34,4 +34,4 @@ CMD php artisan config:cache \
     && php artisan route:cache \
     && php artisan event:cache \
     && php artisan migrate --force \
-    && frankenphp run --config /etc/frankenphp/Caddyfile
+    && php artisan serve --host=0.0.0.0 --port=${PORT:-8080}
