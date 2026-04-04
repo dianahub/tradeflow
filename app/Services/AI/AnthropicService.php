@@ -14,7 +14,7 @@ class AnthropicService
 
     public function __construct()
     {
-        $this->apiKey = config('services.anthropic.key', '');
+        $this->apiKey = trim(config('services.anthropic.key', ''));
         $this->model  = config('services.anthropic.model', 'claude-haiku-4-5-20251001');
     }
 
