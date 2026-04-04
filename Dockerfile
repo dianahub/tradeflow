@@ -1,5 +1,9 @@
 FROM dunglas/frankenphp:php8.3-bookworm
 
+# PHP runtime config
+RUN echo "upload_max_filesize=20M\npost_max_size=20M\nmax_execution_time=120\nmax_input_time=120" \
+    > /usr/local/etc/php/conf.d/custom.ini
+
 # Install system dependencies
 RUN apt-get update && apt-get install -y git unzip zip curl && rm -rf /var/lib/apt/lists/*
 
