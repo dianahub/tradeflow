@@ -125,6 +125,6 @@ class AnthropicService
         }
 
         Log::error("Anthropic API failed after {$maxAttempts} attempts: {$lastError}");
-        throw new AnthropicApiException("AI analysis is temporarily unavailable. Please try again shortly.");
+        throw new AnthropicApiException("AI unavailable. Last error: {$lastError}");
     }
 }
