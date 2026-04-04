@@ -33,6 +33,7 @@ class AnthropicService
             ],
         ];
 
+        Log::info('Anthropic complete()', ['model' => $payload['model'], 'key_prefix' => substr($this->apiKey, 0, 16)]);
         $response = $this->callWithRetry($payload);
 
         return $response['content'][0]['text'] ?? '';
@@ -108,6 +109,7 @@ class AnthropicService
                 }
 
                 // Non-retryable error (4xx except 429)
+                Log::error('Anthropic non-retryable error', ['status' => $statusCode, 'body' => $response->body(), 'key_prefix' => substr($this->apiKey, 0, 16)]);
                 throw new AnthropicApiException("Anthropic API error: {$lastError}", $statusCode);
 
             } catch (AnthropicApiException $e) {
