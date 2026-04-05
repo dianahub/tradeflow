@@ -73,7 +73,7 @@ class TradingAnalysisService
     public function getSellRecommendations(User $user, Collection $positions): array
     {
         $contextData  = $this->portfolioContextData($positions);
-        $contextHash  = $this->cache->hashContext(['sell', ...$contextData]);
+        $contextHash  = $this->cache->hashContext(['sell_v2', ...$contextData]);
         $promptSummary = $this->buildPortfolioPromptSummary($positions);
 
         if ($cached = $this->cache->find($user->id, 'sell_recommendations', $contextHash)) {
@@ -81,7 +81,7 @@ class TradingAnalysisService
         }
 
         $ragContext = $this->retrieveRagContext($user->id, 'sell_recommendations', $promptSummary);
-        $text       = $this->anthropic->complete($this->buildSellRecommendationsPrompt($positions, $ragContext), maxTokens: 1000);
+        $text       = $this->anthropic->complete($this->buildSellRecommendationsPrompt($positions, $ragContext), maxTokens: 300);
 
         $this->cache->store($user->id, 'sell_recommendations', 'portfolio', $contextHash, $promptSummary, $text, $contextData);
 
@@ -260,21 +260,22 @@ EOT;
         })->implode("\n");
 
         return <<<EOT
-{$ragContext}You are a professional portfolio manager. Review this portfolio and give clear sell/hold guidance.
+{$ragContext}You are a professional portfolio manager. Identify the SINGLE most important position to sell right now, if any.
 
 Today's date: {$todayStr}
 
-POSITIONS:
+PORTFOLIO:
 {$positionList}
 
-Provide sell recommendations in these exact sections:
+Respond in this exact format:
 
-SELL IMMEDIATELY — positions that should be exited now (explain why for each)
-CONSIDER SELLING — positions worth reviewing for exit (explain the trigger condition)
-STRONG HOLDS — positions to keep without question (brief reason)
-BOTTOM LINE — one paragraph summary of the overall portfolio action
+TOP SELL: [SYMBOL] — [one sentence reason using the actual numbers]
 
-Rules: Use the provided position data for all P&L numbers. You may reference technical signals (moving averages, MACD, RSI, key support/resistance) from your training knowledge when they directly support a sell or hold call — label them as estimates. Be specific about which positions and why.
+If nothing should be sold:
+
+TOP SELL: Nothing to sell right now — [one sentence on what to watch]
+
+Rules: Use ONLY the numbers provided. No RSI/MACD. Be direct. One line only.
 EOT;
     }
 

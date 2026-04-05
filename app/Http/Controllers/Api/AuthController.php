@@ -23,16 +23,24 @@ class AuthController extends Controller
         ]);
 
         $user = User::create([
-            'name'     => $validated['name'],
-            'email'    => $validated['email'],
-            'password' => Hash::make($validated['password']),
+            'name'              => $validated['name'],
+            'email'             => $validated['email'],
+            'password'          => Hash::make($validated['password']),
+            'email_verified_at' => now(),
         ]);
 
-        $user->sendEmailVerificationNotification();
+        $user->tokens()->delete();
 
         return response()->json([
-            'needs_verification' => true,
-            'message' => 'Account created. Please check your email and click the verification link before signing in.',
+            'user'  => [
+                'id'               => $user->id,
+                'name'             => $user->name,
+                'email'            => $user->email,
+                'login_count'      => $user->login_count,
+                'logins_remaining' => null,
+                'is_paid'          => $user->is_paid,
+            ],
+            'token' => $user->createToken('api-token')->plainTextToken,
         ], 201);
     }
 
@@ -48,13 +56,6 @@ class AuthController extends Controller
         }
 
         $user = Auth::user();
-
-        if (!$user->hasVerifiedEmail()) {
-            return response()->json([
-                'needs_verification' => true,
-                'message' => 'Please verify your email before signing in. Check your inbox for the verification link.',
-            ], 403);
-        }
 
         // Check login limit for free users (skip in development)
         if (app('env') !== 'local' && !$user->is_paid && $user->login_count >= 5) {
