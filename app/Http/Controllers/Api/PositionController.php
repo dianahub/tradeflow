@@ -106,7 +106,7 @@ public function sellRecommendations(): JsonResponse
     try {
         $result = $this->analysis->getSellRecommendations(auth()->user(), $positions);
     } catch (AnthropicApiException $e) {
-        return response()->json(['message' => $e->getMessage()], 503);
+        return response()->json(['message' => $this->aiErrorMessage($e)], 503);
     }
 
     return response()->json($result);
@@ -119,7 +119,7 @@ public function sellRecommendations(): JsonResponse
         try {
             $result = $this->analysis->analyzePosition(auth()->user(), $position);
         } catch (AnthropicApiException $e) {
-            return response()->json(['message' => $e->getMessage()], 503);
+            return response()->json(['message' => $this->aiErrorMessage($e)], 503);
         }
 
         return response()->json(array_merge(['position' => $position], $result));
@@ -139,7 +139,7 @@ public function sellRecommendations(): JsonResponse
         try {
             $result = $this->analysis->analyzePortfolio(auth()->user(), $positions);
         } catch (AnthropicApiException $e) {
-            return response()->json(['message' => $e->getMessage()], 503);
+            return response()->json(['message' => $this->aiErrorMessage($e)], 503);
         }
 
         return response()->json(array_merge([
@@ -161,6 +161,14 @@ public function sellRecommendations(): JsonResponse
         'WIRE', 'ACH', 'JOURNAL', 'ADJUSTMENT', 'PENDING', 'SWEEP',
         'MONEY MARKET', 'CORE', 'REINVESTMENT',
     ];
+
+    private function aiErrorMessage(AnthropicApiException $e): string
+    {
+        if ($e->getMessage() === 'CREDITS_EXPIRED') {
+            return 'Claude credits temporarily expired — please contact Diana and let her know.';
+        }
+        return $e->getMessage();
+    }
 
     private function upsertPosition(array $data): ?Position
     {

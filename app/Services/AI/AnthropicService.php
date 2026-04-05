@@ -108,6 +108,13 @@ class AnthropicService
                     }
                 }
 
+                // Billing / credits exhausted
+                $body = $response->json();
+                $errorType = $body['error']['type'] ?? '';
+                if ($statusCode === 402 || str_contains($errorType, 'billing') || str_contains($errorType, 'credit')) {
+                    throw new AnthropicApiException('CREDITS_EXPIRED', $statusCode);
+                }
+
                 // Non-retryable error (4xx except 429)
                 Log::error('Anthropic non-retryable error', ['status' => $statusCode, 'body' => $response->body(), 'key_prefix' => substr($this->apiKey, 0, 16)]);
                 throw new AnthropicApiException("Anthropic API error: {$lastError}", $statusCode);
