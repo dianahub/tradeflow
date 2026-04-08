@@ -22,7 +22,7 @@ Route::post('/analyze-free',  [FreeAnalysisController::class, 'analyze']);
 
 // Protected routes
 // DEMO MODE: swap 'demo.auth' back to 'auth:sanctum' to restore real authentication
-Route::middleware('demo.auth')->group(function () {
+Route::middleware('auth:sanctum')->group(function () {
 
     Route::post('/logout', [AuthController::class, 'logout']);
 
