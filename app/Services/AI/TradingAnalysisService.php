@@ -5,6 +5,7 @@ namespace App\Services\AI;
 use App\Exceptions\AnthropicApiException;
 use App\Models\AiAnalysis;
 use App\Models\Position;
+use App\Models\Prompt;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -158,7 +159,7 @@ class TradingAnalysisService
         $today        = now()->startOfDay();
         $totalValue   = $positions->sum('value');
         $totalGain    = $positions->sum('total_gain_dollar');
-        $totalGainPct = $totalValue > 0 ? ($totalGain / ($totalValue - $totalGain)) * 100 : 0;
+        $totalGainPct = $totalValue > 0 ? round(($totalGain / ($totalValue - $totalGain)) * 100, 2) : 0;
         $dayGain      = $positions->sum('days_gain_dollar');
 
         $positionList = $positions->map(function (Position $p) use ($today) {
@@ -166,36 +167,23 @@ class TradingAnalysisService
                 . "\${$p->total_gain_dollar} total gain ({$p->total_gain_percent}%), "
                 . "\${$p->days_gain_dollar} today";
             if ($p->asset_type === 'option' && $p->expiration_date) {
-                $dte  = (int) $today->diffInDays(\Carbon\Carbon::parse($p->expiration_date), false);
+                $dte  = (int) $today->diffInDays(Carbon::parse($p->expiration_date), false);
                 $line .= ", {$p->option_type} strike \${$p->strike_price} exp {$p->expiration_date} ({$dte} days to expiry)";
             }
             return $line;
         })->implode("\n");
 
-        $todayStr = $today->toDateString();
+        $template = $this->getTemplate('portfolio_analysis');
 
-        return <<<EOT
-{$ragContext}You are a professional portfolio analyst. Analyze this portfolio and give a clear, direct assessment.
+        $filled = str_replace([
+            '{{TODAY}}', '{{TOTAL_VALUE}}', '{{TOTAL_GAIN}}', '{{TOTAL_GAIN_PCT}}',
+            '{{DAY_GAIN}}', '{{POSITION_COUNT}}', '{{POSITION_LIST}}',
+        ], [
+            $today->toDateString(), $totalValue, $totalGain, $totalGainPct,
+            $dayGain, $positions->count(), $positionList,
+        ], $template);
 
-Today's date: {$todayStr}
-
-PORTFOLIO SUMMARY:
-Total Value: \${$totalValue}
-Total Gain: \${$totalGain} ({$totalGainPct}%)
-Today's Change: \${$dayGain}
-Number of Positions: {$positions->count()}
-
-POSITIONS:
-{$positionList}
-
-Provide a concise analysis covering:
-1. PORTFOLIO HEALTH — overall assessment, diversification, risk concentration
-2. TOP RISKS — the 2-3 biggest risks right now (be specific, use the actual numbers)
-3. BRIGHT SPOTS — what is working well
-4. ACTION ITEMS — 2-3 specific, actionable steps ranked by priority
-
-Use the provided data for all P&L numbers. You may reference technical signals (moving averages, MACD, RSI) from your training knowledge when relevant — label them as estimates.
-EOT;
+        return $ragContext . $filled;
     }
 
     private function buildPositionPrompt(Position $position, string $ragContext): string
@@ -204,7 +192,7 @@ EOT;
         $optionInfo = '';
         if ($position->asset_type === 'option') {
             $dte = $position->expiration_date
-                ? (int) $today->diffInDays(\Carbon\Carbon::parse($position->expiration_date), false)
+                ? (int) $today->diffInDays(Carbon::parse($position->expiration_date), false)
                 : null;
             $optionInfo = "\nOption Type: {$position->option_type} | Strike: \${$position->strike_price} | Expiry: {$position->expiration_date}"
                 . ($dte !== null ? " ({$dte} days to expiry)" : '')
@@ -213,70 +201,49 @@ EOT;
             if ($position->implied_volatility) $optionInfo .= " | IV: {$position->implied_volatility}%";
         }
 
-        $todayStr = $today->toDateString();
-
         $coveredCallSection = ($position->asset_type === 'stock' && $position->quantity >= 100)
             ? "\n5. COVERED CALL RECOMMENDATION — suggest a covered call strike and expiry if appropriate"
             : '';
 
-        return <<<EOT
-{$ragContext}You are a professional trading analyst. Analyze this position and give a clear, direct assessment.
+        $template = $this->getTemplate('position_analysis');
 
-Today's date: {$todayStr}
+        $filled = str_replace([
+            '{{TODAY}}', '{{SYMBOL}}', '{{ASSET_TYPE}}', '{{QUANTITY}}',
+            '{{PRICE_PAID}}', '{{LAST_PRICE}}', '{{VALUE}}',
+            '{{TOTAL_GAIN}}', '{{TOTAL_GAIN_PCT}}', '{{DAY_GAIN}}',
+            '{{OPTION_INFO}}', '{{COVERED_CALL_SECTION}}',
+        ], [
+            $today->toDateString(), $position->symbol, $position->asset_type, $position->quantity,
+            $position->price_paid, $position->last_price, $position->value,
+            $position->total_gain_dollar, $position->total_gain_percent, $position->days_gain_dollar,
+            $optionInfo, $coveredCallSection,
+        ], $template);
 
-POSITION:
-Symbol: {$position->symbol} ({$position->asset_type})
-Quantity: {$position->quantity} shares
-Cost Basis: \${$position->price_paid}/share
-Current Price: \${$position->last_price}/share
-Total Value: \${$position->value}
-Total Gain/Loss: \${$position->total_gain_dollar} ({$position->total_gain_percent}%)
-Today's Change: \${$position->days_gain_dollar}{$optionInfo}
-
-Provide analysis covering:
-1. ACTION ITEM — one clear, specific recommendation (lead with this)
-2. POSITION ASSESSMENT — current status, risk/reward at this level
-3. SHORT-TERM OUTLOOK — next 1-4 weeks based on position mechanics
-4. LONG-TERM OUTLOOK — 3-12 month view
-5. PRICE TARGETS — upside target and downside risk level (based on technicals or fundamentals you know, clearly labelled as estimates){$coveredCallSection}
-
-Consider macro context (interest rates, sector trends, market conditions). Use only the provided position data for P&L numbers.
-You may reference technical signals (moving averages, MACD, RSI, support/resistance) from your training knowledge if they are directly relevant to the ACTION ITEM — label them as estimates and only include them when they strengthen or change the recommendation. Do not mention covered calls.
-EOT;
+        return $ragContext . $filled;
     }
 
     private function buildSellRecommendationsPrompt(Collection $positions, string $ragContext): string
     {
         $today = now()->startOfDay();
-        $todayStr = $today->toDateString();
 
         $positionList = $positions->map(function (Position $p) use ($today) {
             $line = "- {$p->symbol}: \${$p->value} | {$p->total_gain_percent}% total | \${$p->days_gain_dollar} today";
             if ($p->asset_type === 'option' && $p->expiration_date) {
-                $dte  = (int) $today->diffInDays(\Carbon\Carbon::parse($p->expiration_date), false);
+                $dte  = (int) $today->diffInDays(Carbon::parse($p->expiration_date), false);
                 $line .= " | {$p->option_type} strike \${$p->strike_price} exp {$p->expiration_date} ({$dte} DTE)";
             }
             return $line;
         })->implode("\n");
 
-        return <<<EOT
-{$ragContext}You are a professional portfolio manager. Identify the SINGLE most important position to sell right now, if any.
+        $template = $this->getTemplate('sell_recommendations');
 
-Today's date: {$todayStr}
+        $filled = str_replace(
+            ['{{TODAY}}', '{{POSITION_LIST}}'],
+            [$today->toDateString(), $positionList],
+            $template
+        );
 
-PORTFOLIO:
-{$positionList}
-
-Respond in this exact format:
-
-TOP SELL: [SYMBOL] — [one sentence reason using the actual numbers]
-
-If nothing should be sold:
-
-TOP SELL: Nothing to sell right now — [one sentence on what to watch]
-
-Rules: Use ONLY the numbers provided. No RSI/MACD. Be direct. One line only.
-EOT;
+        return $ragContext . $filled;
     }
 
     private function buildJournalInsightsPrompt(Collection $trades, string $ragContext): string
@@ -300,26 +267,17 @@ EOT;
             "- {$t->symbol} {$t->direction}: entry \${$t->entry_price} → exit \${$t->exit_price}, PnL \${$t->pnl}"
         )->implode("\n");
 
-        return <<<EOT
-{$ragContext}You are a professional trading coach. Analyze this trader's journal and give specific, actionable insights.
+        $template = $this->getTemplate('journal_insights');
 
-TRADING STATISTICS ({$closed->count()} closed trades):
-Win Rate: {$winRate}%
-Average Win: \${$avgWin}
-Average Loss: \${$avgLoss}
-Profit Factor: {$pFactor}
-Top Symbols: {$topSymbols}
+        $filled = str_replace([
+            '{{TRADE_COUNT}}', '{{WIN_RATE}}', '{{AVG_WIN}}', '{{AVG_LOSS}}',
+            '{{PROFIT_FACTOR}}', '{{TOP_SYMBOLS}}', '{{TRADE_LIST}}',
+        ], [
+            $closed->count(), $winRate, $avgWin, $avgLoss,
+            $pFactor, $topSymbols, $tradeList,
+        ], $template);
 
-RECENT TRADES:
-{$tradeList}
-
-Give exactly 3 specific, actionable insights. Each insight must:
-- Reference actual patterns visible in the data above
-- Include a specific change the trader can make immediately
-- Be direct and honest — do not soften problems
-
-Format each insight as: "INSIGHT [N]: [title] — [explanation and specific action]"
-EOT;
+        return $ragContext . $filled;
     }
 
     // ── Prompt summaries (what gets embedded for RAG) ──────────────────────────
@@ -396,6 +354,16 @@ EOT;
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
+
+    /** Load a prompt template from the DB, falling back to an empty string if not seeded yet. */
+    private function getTemplate(string $key): string
+    {
+        static $cache = [];
+        if (!isset($cache[$key])) {
+            $cache[$key] = Prompt::where('key', $key)->value('template') ?? '';
+        }
+        return $cache[$key];
+    }
 
     private function response(string $text, bool $fromCache = false): array
     {

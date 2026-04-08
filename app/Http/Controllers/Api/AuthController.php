@@ -39,6 +39,7 @@ class AuthController extends Controller
                 'login_count'      => $user->login_count,
                 'logins_remaining' => null,
                 'is_paid'          => $user->is_paid,
+                'is_admin'         => $user->is_admin,
             ],
             'token' => $user->createToken('api-token')->plainTextToken,
         ], 201);
@@ -70,6 +71,7 @@ class AuthController extends Controller
                 'login_count'      => $user->login_count,
                 'logins_remaining' => $loginsRemaining,
                 'is_paid'          => $user->is_paid,
+                'is_admin'         => $user->is_admin,
             ],
             'token' => $user->createToken('api-token')->plainTextToken,
         ]);

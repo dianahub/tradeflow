@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\PositionController;
 use App\Http\Controllers\Api\PriceController;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\PortfolioImportController;
+use App\Http\Controllers\Api\AdminController;
 
 // Public routes
 Route::post('/register',      [AuthController::class, 'register']);
@@ -42,6 +43,16 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // Portfolio screenshot import
     Route::post('portfolio/import-screenshot', [PortfolioImportController::class, 'importFromScreenshot']);
+
+    // Admin — requires is_admin flag
+    Route::middleware('admin')->prefix('admin')->group(function () {
+        Route::get('prompts',                              [AdminController::class, 'listPrompts']);
+        Route::get('prompts/{key}',                        [AdminController::class, 'getPrompt']);
+        Route::put('prompts/{key}',                        [AdminController::class, 'updatePrompt']);
+        Route::get('prompts/{key}/versions',               [AdminController::class, 'promptVersions']);
+        Route::post('prompts/{key}/restore/{version}',     [AdminController::class, 'restoreVersion']);
+        Route::get('users',                                [AdminController::class, 'listUsers']);
+    });
 
     // Analytics
     Route::prefix('analytics')->group(function () {
